@@ -4,7 +4,7 @@ on:
   schedule:
     - cron: "7 4 * * *"
   push:
-    paths: ["*.zip", ".github/workflows/video.yml"]
+    paths: ["*.zip"]
   workflow_dispatch:
     inputs:
       mode:
@@ -13,6 +13,9 @@ on:
       engine:
         description: "blender ou images"
         default: "blender"
+      script:
+        description: "script JSON du depot a utiliser (ex : scripts/test_panenka.json), vide = script du jour"
+        default: ""
 
 permissions:
   contents: write
@@ -85,11 +88,30 @@ jobs:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           BLENDER_BIN: /opt/blender/blender
+          TIKTOK_CLIENT_KEY: ${{ secrets.TIKTOK_CLIENT_KEY }}
+          TIKTOK_CLIENT_SECRET: ${{ secrets.TIKTOK_CLIENT_SECRET }}
+          TIKTOK_REFRESH_TOKEN: ${{ secrets.TIKTOK_REFRESH_TOKEN }}
+          TIKTOK_TOKEN_OUT: ${{ runner.temp }}/tiktok_rt
           ENGINE: ${{ github.event.inputs.engine || 'blender' }}
           TZ: Europe/Paris
         run: |
           M="${{ github.event.inputs.mode }}"; A=""; [ -n "$M" ] && A="--mode $M"
+          S="${{ github.event.inputs.script }}"
+          # depot d'une mise a jour (zip) = video de test avec le script valide
+          [ "${{ github.event_name }}" = "push" ] && [ -f scripts/test_panenka.json ] && S="scripts/test_panenka.json"
+          [ -n "$S" ] && A="$A --script $S"
           python main.py $A || { sleep 60; python main.py $A; }
+
+      - name: Ranger le nouveau jeton TikTok dans les secrets chiffres
+        if: always()
+        env:
+          GH_TOKEN: ${{ secrets.REPO_ADMIN_TOKEN }}
+          F: ${{ runner.temp }}/tiktok_rt
+        run: |
+          [ -s "$F" ] || exit 0
+          echo "::add-mask::$(cat "$F")"
+          [ -n "$GH_TOKEN" ] && gh secret set TIKTOK_REFRESH_TOKEN --repo "$GITHUB_REPOSITORY" < "$F" || echo "jeton non mis a jour"
+          rm -f "$F"
 
       - name: Video telechargeable 7 jours
         if: always()

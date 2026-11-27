@@ -1,0 +1,36 @@
+name: Connexion TikTok (une seule fois)
+
+on:
+  workflow_dispatch:
+    inputs:
+      code:
+        description: "code d'autorisation TikTok (usage unique, expire en quelques minutes)"
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  auth:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Echanger le code contre un jeton (range dans les secrets)
+        env:
+          TIKTOK_CLIENT_KEY: ${{ secrets.TIKTOK_CLIENT_KEY }}
+          TIKTOK_CLIENT_SECRET: ${{ secrets.TIKTOK_CLIENT_SECRET }}
+          TIKTOK_CODE: ${{ github.event.inputs.code }}
+          TIKTOK_REDIRECT_URI: https://${{ github.repository_owner }}.github.io/tiktok-auto/callback.html
+          TIKTOK_TOKEN_OUT: ${{ runner.temp }}/tiktok_rt
+          GH_TOKEN: ${{ secrets.REPO_ADMIN_TOKEN }}
+        run: |
+          echo "::add-mask::$TIKTOK_CODE"
+          pip install -q requests
+          python -m app.tiktok_post
+          echo "::add-mask::$(cat "$TIKTOK_TOKEN_OUT")"
+          gh secret set TIKTOK_REFRESH_TOKEN --repo "$GITHUB_REPOSITORY" < "$TIKTOK_TOKEN_OUT"
+          rm -f "$TIKTOK_TOKEN_OUT"
+          echo "Compte TikTok connecte."
