@@ -57,7 +57,7 @@ def empty(name, loc=(0, 0, 0), parent=None):
     return e
 
 
-def sphere(loc, r, color, parent, scale=(1, 1, 1), rough=0.45, seg=40):
+def sphere(loc, r, color, parent, scale=(1, 1, 1), rough=0.45, seg=28):
     bpy.ops.mesh.primitive_uv_sphere_add(radius=r, location=(0, 0, 0), segments=seg, ring_count=seg // 2)
     o = bpy.context.active_object
     bpy.ops.object.shade_smooth()
@@ -254,9 +254,17 @@ def setup_render():
         s.cycles.denoiser = "OPENIMAGEDENOISE"
     except Exception:
         pass
-    s.cycles.max_bounces = 4
-    s.cycles.diffuse_bounces = 2
-    s.cycles.glossy_bounces = 2
+    s.cycles.adaptive_threshold = 0.08
+    try:
+        s.cycles.denoising_prefilter = "FAST"
+        s.cycles.denoising_input_passes = "RGB_ALBEDO"
+    except Exception:
+        pass
+    s.cycles.max_bounces = 3
+    s.cycles.diffuse_bounces = 1
+    s.cycles.glossy_bounces = 1
+    s.cycles.caustics_reflective = False
+    s.cycles.caustics_refractive = False
     s.cycles.transparent_max_bounces = 2
     s.render.use_persistent_data = True
     s.render.resolution_x, s.render.resolution_y = SPEC["width"], SPEC["height"]
@@ -265,7 +273,8 @@ def setup_render():
     s.render.image_settings.file_format = "JPEG"
     s.render.image_settings.quality = 92
     s.render.filepath = OUT
-    s.frame_start, s.frame_end = 1, TOTAL
+    s.frame_start = SPEC.get("frame_start", 1)
+    s.frame_end = min(SPEC.get("frame_end", TOTAL), TOTAL)
     for vt in ("AgX", "Filmic"):
         try:
             s.view_settings.view_transform = vt

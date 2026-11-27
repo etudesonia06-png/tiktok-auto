@@ -67,7 +67,7 @@ def synthesize(scenes: list[dict], workdir: Path) -> list[dict]:
         words = None
         if not config.OFFLINE:
             try:
-                words = asyncio.run(_edge(text, mp3, sc.get("voice") or config.VOICE))
+                words = asyncio.run(asyncio.wait_for(_edge(text, mp3, sc.get("voice") or config.VOICE), timeout=60))
             except Exception as e:
                 print(f"[voix] Edge TTS indisponible ({e}), voix muette de secours")
         if words is None:

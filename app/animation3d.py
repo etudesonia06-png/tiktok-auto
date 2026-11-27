@@ -108,27 +108,60 @@ def build_spec(script: dict, scenes: list[dict], cast: list[dict], fps: int, w: 
     crowd = [c["colors"][0] for c in cast if c["type"] == "supporter"][:2] or ["#c1272d", "#006233"]
     return {"fps": fps, "width": w, "height": h, "total_frames": total, "cast": cast,
             "envelopes": env, "speaker_at": speaker_at, "shots": shots, "cheer_frames": cheer,
-            "crowd_colors": crowd + ["#ffffff"], "samples": int(os.getenv("RENDER_SAMPLES", "12")),
+            "crowd_colors": crowd + ["#ffffff"], "samples": int(os.getenv("RENDER_SAMPLES", "8")),
             "seed": abs(hash(script.get("title", ""))) % 1000}
 
 
-def render(script: dict, scenes: list[dict], cast: list[dict], workdir: Path) -> Path:
-    """Lance Blender et renvoie une vidéo muette 1080x1920."""
-    fps = int(os.getenv("RENDER_FPS", "24"))
-    rw, rh = int(os.getenv("RENDER_W", "720")), int(os.getenv("RENDER_H", "1280"))
-    spec = build_spec(script, scenes, cast, fps, rw, rh)
+# Paliers de qualité, du plus beau au plus rapide : (images/s, largeur, hauteur, échantillons)
+QUALITY_LADDER = [(15, 576, 1024, 8), (12, 480, 854, 6), (10, 432, 768, 4), (8, 360, 640, 3)]
+
+
+def _run_blender(spec: dict, workdir: Path, frames: Path, timeout_s: int):
     spec_path = workdir / "spec.json"
     spec_path.write_text(json.dumps(spec), encoding="utf-8")
-    frames = workdir / "frames"
     frames.mkdir(parents=True, exist_ok=True)
-    blender = blender_bin()
-    if not blender:
-        raise RuntimeError("Blender introuvable (variable BLENDER_BIN)")
-    print(f"   Blender : {spec['total_frames']} images {rw}x{rh} à {fps} i/s, {len(cast)} personnages")
-    r = subprocess.run([blender, "-b", "--factory-startup", "-noaudio", "-P", str(SCENE_SCRIPT), "--",
-                        str(spec_path), str(frames)], capture_output=True, text=True)
+    try:
+        r = subprocess.run([blender_bin(), "-b", "--factory-startup", "-noaudio", "-P", str(SCENE_SCRIPT), "--",
+                            str(spec_path), str(frames)], capture_output=True, text=True, timeout=timeout_s)
+    except subprocess.TimeoutExpired:
+        raise RuntimeError(f"Rendu 3D arrêté : plus de {timeout_s // 60} min")
     if r.returncode != 0 or not any(frames.glob("f_*.jpg")):
-        raise RuntimeError("Rendu Blender échoué :\n" + (r.stdout[-2500:] + r.stderr[-2500:]))
+        raise RuntimeError("Rendu Blender échoué :\n" + (r.stdout[-2000:] + r.stderr[-2000:]))
+
+
+def render(script: dict, scenes: list[dict], cast: list[dict], workdir: Path) -> Path:
+    """Lance Blender et renvoie une vidéo muette 1080x1920, en restant dans le budget de temps."""
+    import time
+    if not blender_bin():
+        raise RuntimeError("Blender introuvable (variable BLENDER_BIN)")
+    budget = float(os.getenv("RENDER_BUDGET_MIN", "45")) * 60
+    frames = workdir / "frames"
+    # --- test de vitesse : 4 images au palier le plus beau
+    fps, rw, rh, spp = QUALITY_LADDER[0]
+    spec = build_spec(script, scenes, cast, fps, rw, rh)
+    spec.update(samples=spp, frame_start=1, frame_end=4)
+    t0 = time.time()
+    _run_blender(spec, workdir, frames, timeout_s=600)
+    per_frame = (time.time() - t0) / 4  # prudent : inclut la préparation de la scène
+    shutil.rmtree(frames, ignore_errors=True)
+    print(f"   Test de vitesse : {per_frame:.1f} s par image")
+    # --- choix du palier qui tient dans le budget
+    base_cost = rw * rh * spp
+    choice = None
+    for f, w, h, n in QUALITY_LADDER:
+        total = int(round(sum(s["duration"] for s in scenes) * f))
+        est = per_frame * (w * h * n) / base_cost * total
+        print(f"   Palier {f} i/s {w}x{h} {n} éch. : environ {est / 60:.0f} min")
+        if est <= budget:
+            choice = (f, w, h, n)
+            break
+    if choice is None:
+        raise RuntimeError("Machine trop lente pour la 3D aujourd'hui : passage au mode secours")
+    fps, rw, rh, spp = choice
+    spec = build_spec(script, scenes, cast, fps, rw, rh)
+    spec["samples"] = spp
+    print(f"   Rendu 3D : {spec['total_frames']} images {rw}x{rh} à {fps} i/s, {spp} échantillons")
+    _run_blender(spec, workdir, frames, timeout_s=int(budget * 1.4))
     out = workdir / "video_noaudio.mp4"
     subprocess.run(["ffmpeg", "-y", "-v", "error", "-framerate", str(fps), "-i", str(frames / "f_%04d.jpg"),
                     "-vf", f"scale={config.WIDTH}:{config.HEIGHT}:flags=lanczos,fps={config.FPS},"
