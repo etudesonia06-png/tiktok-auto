@@ -1,0 +1,191 @@
+"""Côté application : prépare la distribution (personnages réutilisables), les voix par personnage,
+l'enveloppe de chaque voix pour la synchro labiale, les plans de caméra, lance Blender,
+puis assemble les images en vidéo et crée l'ambiance sonore (foule, sifflet, clameur)."""
+import json
+import os
+import shutil
+import subprocess
+import wave
+from pathlib import Path
+
+import numpy as np
+
+from . import config
+
+SCENE_SCRIPT = Path(__file__).with_name("blender_scene.py")
+
+# Bibliothèque de personnages réutilisables
+LIBRARY = {
+    "lion": {"type": "lion", "voice": "fr-FR-HenriNeural",
+             "colors": ["#ffffff", "#1fa34a", "#f6c21c", "#d62828"]},
+    "supporter_rouge": {"type": "supporter", "voice": "fr-FR-RemyMultilingualNeural",
+                        "colors": ["#c1272d", "#006233"], "skin": "#c68642"},
+    "supporter_vert": {"type": "supporter", "voice": "fr-FR-DeniseNeural",
+                       "colors": ["#00853f", "#fdef42"], "skin": "#8d5524"},
+    "supporter_bleu": {"type": "supporter", "voice": "fr-FR-EloiseNeural",
+                       "colors": ["#1d3c8f", "#ffffff"], "skin": "#f1c27d"},
+    "yanis": {"type": "person", "voice": "fr-FR-RemyMultilingualNeural",
+              "colors": ["#2f5d8a", "#e8e8e8"], "skin": "#e0ac69"},
+    "nadia": {"type": "person", "voice": "fr-FR-DeniseNeural",
+              "colors": ["#7b2d5b", "#f2c94c"], "skin": "#c68642"},
+    "amar": {"type": "person", "voice": "fr-FR-HenriNeural",
+             "colors": ["#4a4a4a", "#c9a227"], "skin": "#a0522d"},
+    "sofiane": {"type": "person", "voice": "fr-FR-RemyMultilingualNeural",
+                "colors": ["#1b7f5f", "#ffffff"], "skin": "#8d5524"},
+}
+DEFAULT_CAST = {"football": ["supporter_rouge", "lion", "supporter_vert"],
+                "series": ["nadia", "yanis", "sofiane"],
+                "trend": ["supporter_bleu", "lion", "supporter_rouge"]}
+
+
+def blender_bin() -> str | None:
+    b = os.getenv("BLENDER_BIN") or shutil.which("blender")
+    return b if b and Path(b).exists() else None
+
+
+def prepare_cast(script: dict) -> list[dict]:
+    """Choisit la distribution et attribue un orateur + une voix à chaque scène."""
+    mode = script.get("mode", "football")
+    ids = []
+    for c in script.get("cast", []):
+        cid = str(c.get("id", "")).lower()
+        if cid in LIBRARY and cid not in ids:
+            ids.append(cid)
+    if not ids:
+        ids = DEFAULT_CAST.get(mode, DEFAULT_CAST["football"])
+    ids = ids[:4]
+    cast = []
+    for cid in ids:
+        c = dict(LIBRARY[cid])
+        c["id"] = cid
+        over = next((x for x in script.get("cast", []) if str(x.get("id", "")).lower() == cid), {})
+        if isinstance(over.get("colors"), list) and len(over["colors"]) >= 2:
+            c["colors"] = over["colors"]
+        cast.append(c)
+    voices = {c["id"]: c["voice"] for c in cast}
+    for i, sc in enumerate(script["scenes"]):
+        sp = str(sc.get("speaker", "")).lower()
+        if sp not in voices:
+            sp = ids[i % len(ids)] if mode != "series" else ids[min(1, len(ids) - 1)]
+        sc["speaker"] = sp
+        sc["voice"] = voices[sp]
+    return cast
+
+
+def envelope(audio: str, frames: int, fps: int) -> list[float]:
+    pcm = subprocess.run(["ffmpeg", "-v", "error", "-i", audio, "-f", "s16le", "-ac", "1", "-ar", "16000", "-"],
+                         capture_output=True, check=True).stdout
+    x = np.frombuffer(pcm, dtype=np.int16).astype(np.float32) / 32768
+    hop = 16000 // fps
+    out = []
+    for f in range(frames):
+        seg = x[f * hop:(f + 1) * hop]
+        out.append(float(np.sqrt(np.mean(seg ** 2))) if len(seg) else 0.0)
+    a = np.array(out)
+    if a.max() > 0:
+        a = np.clip(a / (np.percentile(a, 95) + 1e-6), 0, 1)
+    a = np.convolve(a, [0.25, 0.5, 0.25], mode="same")  # bouche plus douce
+    return [round(float(v), 3) for v in a]
+
+
+def build_spec(script: dict, scenes: list[dict], cast: list[dict], fps: int, w: int, h: int) -> dict:
+    total = int(round(sum(s["duration"] for s in scenes) * fps))
+    env = {c["id"]: [0.0] * total for c in cast}
+    speaker_at = [""] * total
+    shots, start = [], 0
+    for i, sc in enumerate(scenes):
+        n = int(round(sc["duration"] * fps))
+        n = min(n, total - start)
+        e = envelope(sc["audio"], n, fps)
+        env[sc["speaker"]][start:start + n] = e
+        speaker_at[start:start + n] = [sc["speaker"]] * n
+        wide = i == 0 or i == len(scenes) - 1 or i % 4 == 3
+        shots.append({"start": start, "end": start + n - 1, "speaker": sc["speaker"],
+                      "type": "wide" if wide else "close"})
+        start += n
+    last = shots[-1]
+    cheer = list(range(last["start"], last["end"] + 1)) if script.get("mode") == "football" else []
+    crowd = [c["colors"][0] for c in cast if c["type"] == "supporter"][:2] or ["#c1272d", "#006233"]
+    return {"fps": fps, "width": w, "height": h, "total_frames": total, "cast": cast,
+            "envelopes": env, "speaker_at": speaker_at, "shots": shots, "cheer_frames": cheer,
+            "crowd_colors": crowd + ["#ffffff"], "samples": int(os.getenv("RENDER_SAMPLES", "12")),
+            "seed": abs(hash(script.get("title", ""))) % 1000}
+
+
+def render(script: dict, scenes: list[dict], cast: list[dict], workdir: Path) -> Path:
+    """Lance Blender et renvoie une vidéo muette 1080x1920."""
+    fps = int(os.getenv("RENDER_FPS", "24"))
+    rw, rh = int(os.getenv("RENDER_W", "720")), int(os.getenv("RENDER_H", "1280"))
+    spec = build_spec(script, scenes, cast, fps, rw, rh)
+    spec_path = workdir / "spec.json"
+    spec_path.write_text(json.dumps(spec), encoding="utf-8")
+    frames = workdir / "frames"
+    frames.mkdir(parents=True, exist_ok=True)
+    blender = blender_bin()
+    if not blender:
+        raise RuntimeError("Blender introuvable (variable BLENDER_BIN)")
+    print(f"   Blender : {spec['total_frames']} images {rw}x{rh} à {fps} i/s, {len(cast)} personnages")
+    r = subprocess.run([blender, "-b", "--factory-startup", "-noaudio", "-P", str(SCENE_SCRIPT), "--",
+                        str(spec_path), str(frames)], capture_output=True, text=True)
+    if r.returncode != 0 or not any(frames.glob("f_*.jpg")):
+        raise RuntimeError("Rendu Blender échoué :\n" + (r.stdout[-2500:] + r.stderr[-2500:]))
+    out = workdir / "video_noaudio.mp4"
+    subprocess.run(["ffmpeg", "-y", "-v", "error", "-framerate", str(fps), "-i", str(frames / "f_%04d.jpg"),
+                    "-vf", f"scale={config.WIDTH}:{config.HEIGHT}:flags=lanczos,fps={config.FPS},"
+                           "eq=saturation=1.08:contrast=1.03",
+                    "-c:v", "libx264", "-preset", "veryfast", "-crf", "19", "-pix_fmt", "yuv420p", str(out)],
+                   check=True)
+    shutil.rmtree(frames, ignore_errors=True)
+    return out
+
+
+# ---------------------------------------------------------------- effets sonores (générés, libres de droits)
+def _write_wav(path: Path, x: np.ndarray, sr: int):
+    x = np.clip(x, -1, 1)
+    st = (np.stack([x, x], axis=1) * 32767).astype(np.int16)
+    with wave.open(str(path), "wb") as w:
+        w.setnchannels(2)
+        w.setsampwidth(2)
+        w.setframerate(sr)
+        w.writeframes(st.tobytes())
+
+
+def soundscape(scenes: list[dict], mode: str, dest: Path, sr: int = 32000) -> Path:
+    """Ambiance de stade (bruit filtré qui ondule), sifflet au début, clameur à la fin, petits « swoosh »
+    aux changements de plan. Tout est synthétisé : aucun problème de droits."""
+    total = sum(s["duration"] for s in scenes)
+    n = int(total * sr)
+    rng = np.random.default_rng(3)
+    t = np.arange(n) / sr
+    out = np.zeros(n, dtype=np.float32)
+    if mode in ("football", "trend"):
+        noise = rng.standard_normal(n).astype(np.float32)
+        # bruit « brun » doux (foule lointaine)
+        crowd = np.cumsum(noise)
+        crowd -= np.convolve(crowd, np.ones(4000) / 4000, mode="same")
+        crowd /= np.abs(crowd).max() + 1e-6
+        swell = 0.55 + 0.25 * np.sin(2 * np.pi * t / 7.0) + 0.2 * np.sin(2 * np.pi * t / 2.9)
+        out += 0.10 * crowd * swell
+        # sifflet d'arbitre
+        dur = 0.7
+        m = t < dur
+        trill = 1 + 0.5 * np.sign(np.sin(2 * np.pi * 28 * t[m]))
+        out[m] += 0.22 * np.sin(2 * np.pi * 2900 * t[m]) * trill * np.minimum(1, (dur - t[m]) * 8)
+        # clameur sur la dernière scène
+        last = scenes[-1]["duration"]
+        s0 = int((total - last) * sr)
+        k = np.arange(n - s0) / sr
+        cheer = rng.standard_normal(n - s0) * np.minimum(1, k / 0.6) * np.exp(-np.maximum(0, k - last + 1.2) * 2)
+        out[s0:] += 0.12 * cheer.astype(np.float32)
+    # swoosh aux changements de plan
+    acc = 0.0
+    for sc in scenes[:-1]:
+        acc += sc["duration"]
+        s0, L = int((acc - 0.12) * sr), int(0.25 * sr)
+        if 0 <= s0 < n - L:
+            win = np.hanning(L)
+            sw = rng.standard_normal(L) * win
+            sw = np.convolve(sw, np.ones(12) / 12, mode="same")
+            out[s0:s0 + L] += 0.18 * sw.astype(np.float32)
+    _write_wav(dest, out, sr)
+    return dest
