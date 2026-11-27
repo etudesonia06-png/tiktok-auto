@@ -1,0 +1,106 @@
+name: Video TikTok du jour
+
+on:
+  schedule:
+    - cron: "7 4 * * *"
+  push:
+    paths: ["tiktok-auto.zip"]
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "football, series, trend ou vide"
+        default: ""
+      engine:
+        description: "blender ou images"
+        default: "blender"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: daily-video
+
+jobs:
+  video:
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    env:
+      BLENDER_DIR: /opt/blender
+      BLENDER_VERSION: "4.2.3"
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Installer ou mettre a jour le code (zip envoye depuis le telephone)
+        run: |
+          git config user.name "tiktok-bot"
+          git config user.email "tiktok-bot@users.noreply.github.com"
+          if [ -f tiktok-auto.zip ]; then
+            unzip -oq tiktok-auto.zip -d /tmp/app
+            cp -r /tmp/app/tiktok-auto/. .
+            git rm -q tiktok-auto.zip
+            git add -A
+            git commit -m "Installation de l'application" && git push
+          fi
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: FFmpeg, police et dependances
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq ffmpeg libxi6 libxxf86vm1 libxfixes3 libxrender1 libgl1 libxkbcommon0 libsm6 libegl1
+          pip install -q -r requirements.txt
+          mkdir -p assets/fonts
+          [ -s assets/fonts/Montserrat.ttf ] || curl -fsSL -o assets/fonts/Montserrat.ttf "https://github.com/google/fonts/raw/main/ofl/montserrat/Montserrat%5Bwght%5D.ttf"
+
+      - name: Blender (cache)
+        id: cb
+        uses: actions/cache@v4
+        with:
+          path: /opt/blender
+          key: blender-4.2.3
+
+      - name: Installer Blender
+        if: steps.cb.outputs.cache-hit != 'true'
+        run: |
+          curl -fsSL -o /tmp/b.tar.xz "https://download.blender.org/release/Blender4.2/blender-${BLENDER_VERSION}-linux-x64.tar.xz"
+          sudo mkdir -p $BLENDER_DIR && sudo tar -xJf /tmp/b.tar.xz -C $BLENDER_DIR --strip-components=1
+          sudo chown -R $USER $BLENDER_DIR
+
+      - name: Creer la video
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          PEXELS_API_KEY: ${{ secrets.PEXELS_API_KEY }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          BLENDER_BIN: /opt/blender/blender
+          ENGINE: ${{ github.event.inputs.engine || 'blender' }}
+          TZ: Europe/Paris
+        run: |
+          M="${{ github.event.inputs.mode }}"; A=""; [ -n "$M" ] && A="--mode $M"
+          python main.py $A || { sleep 60; python main.py $A; }
+
+      - name: Video telechargeable 7 jours
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: video-${{ github.run_number }}
+          path: output/**/*.mp4
+          retention-days: 7
+          if-no-files-found: ignore
+
+      - name: Historique
+        run: |
+          git pull -q --rebase || true
+          git add data/ && git commit -qm "Video du $(date +%F)" && git push || echo "rien"
+
+      - name: Alerte Telegram si echec
+        if: failure()
+        env:
+          T: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          C: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          [ -z "$T" ] && exit 0
+          [ -z "$C" ] && C=$(curl -s "https://api.telegram.org/bot$T/getUpdates" | python3 -c "import sys,json;r=json.load(sys.stdin).get('result',[]);print(next((str(u['message']['chat']['id']) for u in reversed(r) if 'message' in u),''))")
+          curl -s "https://api.telegram.org/bot$T/sendMessage" --data-urlencode "chat_id=$C" --data-urlencode "text=La video du jour a echoue : ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
