@@ -1,0 +1,14 @@
+<!doctype html><html lang="fr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Connexion TikTok</title><link rel="stylesheet" href="style.css"></head><body><main>
+<h1 id="t">Connexion TikTok</h1><p id="m">Lecture de l'autorisation…</p>
+<div id="box" hidden><div class="code" id="c"></div><button id="b">Copier le code</button>
+<p>Colle ce code dans ta conversation avec Claude (il est à usage unique et expire en quelques minutes).</p></div>
+<script>
+const q=new URLSearchParams(location.search),code=q.get('code'),err=q.get('error');
+const m=document.getElementById('m');
+if(code){m.textContent="✅ Autorisation accordée.";document.getElementById('box').hidden=false;
+document.getElementById('c').textContent=code;
+document.getElementById('b').onclick=()=>{navigator.clipboard.writeText(code).then(()=>{document.getElementById('b').textContent='Copié ✓'})};}
+else if(err){m.textContent="❌ Autorisation refusée : "+err+" "+(q.get('error_description')||'');}
+else{m.textContent="Aucun code reçu.";}
+</script></main></body></html>

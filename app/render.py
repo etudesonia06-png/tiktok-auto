@@ -65,8 +65,11 @@ def render(scenes: list[dict], ass: Path, dest: Path, workdir: Path,
         k = len(scenes)
         inputs += ["-i", str(sfx)]
         filt[-1] = filt[-1].replace("[voice]", "[v0]")
-        filt.append(f"[{k}:a]aresample=48000,aformat=channel_layouts=stereo[fx];"
-                    "[v0][fx]amix=inputs=2:duration=first:normalize=0,alimiter=limit=0.95[voice]")
+        total = sum(sc["duration"] for sc in scenes)
+        # duration=longest + atrim : avec duration=first, le délai de loudnorm coupait les 3 dernières secondes
+        filt.append(f"[{k}:a]aresample=48000,aformat=channel_layouts=stereo,apad[fx];"
+                    "[v0][fx]amix=inputs=2:duration=longest:normalize=0,"
+                    f"atrim=0:{total:.3f},alimiter=limit=0.95[voice]")
     _run(["ffmpeg", "-y", "-loglevel", "error", *inputs, "-filter_complex", ";".join(filt),
           "-map", "[voice]", "-c:a", "aac", "-b:a", "192k", str(voice)])
 
@@ -77,11 +80,13 @@ def render(scenes: list[dict], ass: Path, dest: Path, workdir: Path,
     cmd = ["ffmpeg", "-y", "-loglevel", "error", "-i", str(video), "-i", str(voice)]
     if music and music.exists():
         cmd += ["-stream_loop", "-1", "-i", str(music), "-filter_complex",
-                f"[0:v]{vf}[v];[2:a]volume=0.10[m];[1:a][m]amix=inputs=2:duration=first:"
+                f"[0:v]{vf}[v];[2:a]volume=0.12[m];[1:a][m]amix=inputs=2:duration=first:"
                 f"dropout_transition=0[a]", "-map", "[v]", "-map", "[a]"]
     else:
         cmd += ["-vf", vf, "-map", "0:v", "-map", "1:a"]
-    cmd += [*ENC, "-profile:v", "high", "-c:a", "aac", "-b:a", "192k", "-shortest",
+    # débit plafonné : une vidéo de 90 s reste sous la limite de 50 Mo des bots Telegram
+    cmd += [*ENC, "-maxrate", "3800k", "-bufsize", "7600k", "-profile:v", "high",
+            "-c:a", "aac", "-b:a", "160k", "-shortest",
             "-movflags", "+faststart", str(dest)]
     _run(cmd)
     return dest

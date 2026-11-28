@@ -2,13 +2,13 @@ name: Video TikTok du jour
 
 on:
   schedule:
-    - cron: "7 4 * * *"
+    - cron: "7 4 * * *"   # chaque jour vers 5 h 07 (hiver) / 6 h 07 (été), heure de Paris
   push:
     paths: ["*.zip"]
   workflow_dispatch:
     inputs:
       mode:
-        description: "football, series, trend ou vide"
+        description: "football, series, trend ou vide (planning du jour)"
         default: ""
       engine:
         description: "blender ou images"
@@ -16,9 +16,13 @@ on:
       script:
         description: "script JSON du depot a utiliser (ex : scripts/test_panenka.json), vide = script du jour"
         default: ""
+      check_only:
+        description: "oui = seulement verifier Gemini et Telegram (1 minute)"
+        default: "non"
 
 permissions:
   contents: write
+  models: read
 
 concurrency:
   group: daily-video
@@ -26,10 +30,11 @@ concurrency:
 jobs:
   video:
     runs-on: ubuntu-latest
-    timeout-minutes: 240
+    timeout-minutes: 300
     env:
       BLENDER_DIR: /opt/blender
       BLENDER_VERSION: "4.2.3"
+      STATE_DIR: /home/runner/.tiktok-state
     steps:
       - uses: actions/checkout@v4
         with:
@@ -58,6 +63,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+          cache: pip
 
       - name: FFmpeg, police et dependances
         run: |
@@ -66,6 +72,13 @@ jobs:
           pip install -q -r requirements.txt
           mkdir -p assets/fonts
           [ -s assets/fonts/Montserrat.ttf ] || curl -fsSL -o assets/fonts/Montserrat.ttf "https://github.com/google/fonts/raw/main/ofl/montserrat/Montserrat%5Bwght%5D.ttf"
+
+      - name: Memoire privee (identifiant Telegram)
+        uses: actions/cache@v4
+        with:
+          path: /home/runner/.tiktok-state
+          key: tiktok-state-${{ github.run_id }}
+          restore-keys: tiktok-state-
 
       - name: Blender (cache)
         id: cb
@@ -81,26 +94,83 @@ jobs:
           sudo mkdir -p $BLENDER_DIR && sudo tar -xJf /tmp/b.tar.xz -C $BLENDER_DIR --strip-components=1
           sudo chown -R $USER $BLENDER_DIR
 
-      - name: Creer la video
+      - name: Preparer la copie privee
+        run: |
+          D=$(TZ=Europe/Paris date +%F)
+          TAG="video-$D-${{ github.run_number }}"
+          echo "TAG=$TAG" >> "$GITHUB_ENV"
+          echo "VIDEOS_PAGE=${{ github.server_url }}/${{ github.repository }}/releases" >> "$GITHUB_ENV"
+
+      - name: Verifier Gemini et Telegram (aucune valeur affichee)
         env:
-          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GITHUB_MODELS_TOKEN: ${{ github.token }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY || secrets.GEMINI_KEY || secrets.GOOGLE_API_KEY || secrets.GOOGLE_AI_API_KEY }}
           PEXELS_API_KEY: ${{ secrets.PEXELS_API_KEY }}
-          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN || secrets.TELEGRAM_TOKEN || secrets.BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID || secrets.TELEGRAM_CHATID || secrets.CHAT_ID }}
           BLENDER_BIN: /opt/blender/blender
+        run: python main.py --check
+
+      - name: Creer la video
+        id: video
+        if: github.event.inputs.check_only != 'oui'
+        env:
+          GITHUB_MODELS_TOKEN: ${{ github.token }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY || secrets.GEMINI_KEY || secrets.GOOGLE_API_KEY || secrets.GOOGLE_AI_API_KEY }}
+          PEXELS_API_KEY: ${{ secrets.PEXELS_API_KEY }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN || secrets.TELEGRAM_TOKEN || secrets.BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID || secrets.TELEGRAM_CHATID || secrets.CHAT_ID }}
+          BLENDER_BIN: /opt/blender/blender
+          RENDER_BUDGET_MIN: "90"
           TIKTOK_CLIENT_KEY: ${{ secrets.TIKTOK_CLIENT_KEY }}
           TIKTOK_CLIENT_SECRET: ${{ secrets.TIKTOK_CLIENT_SECRET }}
           TIKTOK_REFRESH_TOKEN: ${{ secrets.TIKTOK_REFRESH_TOKEN }}
           TIKTOK_TOKEN_OUT: ${{ runner.temp }}/tiktok_rt
+          # depot TikTok en prive desactive : rien ne part sur TikTok sans validation manuelle
+          TIKTOK_PRIVATE_UPLOAD: "0"
           ENGINE: ${{ github.event.inputs.engine || 'blender' }}
+          MODE_IN: ${{ github.event.inputs.mode }}
+          SCRIPT_IN: ${{ github.event.inputs.script }}
           TZ: Europe/Paris
         run: |
-          M="${{ github.event.inputs.mode }}"; A=""; [ -n "$M" ] && A="--mode $M"
-          S="${{ github.event.inputs.script }}"
+          A=""; [ -n "$MODE_IN" ] && A="--mode $MODE_IN"
+          S="$SCRIPT_IN"
           # depot d'une mise a jour (zip) = video de test avec le script valide
           [ "${{ github.event_name }}" = "push" ] && [ -f scripts/test_panenka.json ] && S="scripts/test_panenka.json"
           [ -n "$S" ] && A="$A --script $S"
-          python main.py $A || { sleep 60; python main.py $A; }
+          python main.py $A || { echo "Nouvel essai en mode images"; ENGINE=images python main.py $A; }
+
+      - name: Copie privee de la video (brouillon visible uniquement par le proprietaire)
+        if: always() && steps.video.outputs.video != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          V: ${{ steps.video.outputs.video }}
+          TITLE: ${{ steps.video.outputs.title }}
+          DUR: ${{ steps.video.outputs.duration }}
+        run: |
+          [ -f "$V" ] || exit 0
+          P="$(dirname "$V")/publication.json"
+          {
+            echo "**$TITLE** ($DUR s) - en attente de validation, a publier manuellement sur TikTok."
+            echo
+            echo "Legende :"
+            echo
+            python3 -c "import json,sys;print(json.load(open(sys.argv[1]))['caption'])" "$P" 2>/dev/null || true
+          } > /tmp/notes.md
+          gh release create "$TAG" "$V" --draft --title "Video du $(TZ=Europe/Paris date +%d/%m/%Y) : $TITLE" \
+            --notes-file /tmp/notes.md --target "$GITHUB_SHA" || echo "lien de secours non cree"
+          {
+            echo "## 🎬 $TITLE ($DUR s)"
+            echo "- Copie privee (connecte a GitHub) : $VIDEOS_PAGE"
+            echo "- Telegram : ${{ steps.video.outputs.telegram }}"
+          } >> "$GITHUB_STEP_SUMMARY"
+          # ne garder que les videos des 14 derniers jours
+          limit=$(date -d '14 days ago' +%s)
+          gh release list --limit 100 --json tagName,createdAt \
+            --jq '.[] | select(.tagName|startswith("video-")) | "\(.tagName) \(.createdAt)"' |
+          while read -r t c; do
+            [ "$(date -d "$c" +%s)" -lt "$limit" ] && gh release delete "$t" --yes --cleanup-tag || true
+          done
 
       - name: Ranger le nouveau jeton TikTok dans les secrets chiffres
         if: always()
@@ -113,26 +183,34 @@ jobs:
           [ -n "$GH_TOKEN" ] && gh secret set TIKTOK_REFRESH_TOKEN --repo "$GITHUB_REPOSITORY" < "$F" || echo "jeton non mis a jour"
           rm -f "$F"
 
-      - name: Video telechargeable 7 jours
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: video-${{ github.run_number }}
-          path: output/**/*.mp4
-          retention-days: 7
-          if-no-files-found: ignore
-
       - name: Historique
+        if: always()
         run: |
-          git pull -q --rebase || true
-          git add data/ && git commit -qm "Video du $(date +%F)" && git push || echo "rien"
+          git add data/
+          git diff --cached --quiet && { echo "rien"; exit 0; }
+          git commit -qm "Video du $(date +%F)"
+          for i in 1 2 3; do
+            git pull -q --rebase origin "${GITHUB_REF_NAME}" && git push -q origin "HEAD:${GITHUB_REF_NAME}" && exit 0
+            sleep 5
+          done
+          echo "historique non enregistre"
 
       - name: Alerte Telegram si echec
         if: failure()
         env:
-          T: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-          C: ${{ secrets.TELEGRAM_CHAT_ID }}
+          T: ${{ secrets.TELEGRAM_BOT_TOKEN || secrets.TELEGRAM_TOKEN || secrets.BOT_TOKEN }}
+          C: ${{ secrets.TELEGRAM_CHAT_ID || secrets.TELEGRAM_CHATID || secrets.CHAT_ID }}
+          URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           [ -z "$T" ] && exit 0
+          [ -z "$C" ] && [ -s "$STATE_DIR/telegram_chat_id" ] && C=$(cat "$STATE_DIR/telegram_chat_id")
           [ -z "$C" ] && C=$(curl -s "https://api.telegram.org/bot$T/getUpdates" | python3 -c "import sys,json;r=json.load(sys.stdin).get('result',[]);print(next((str(u['message']['chat']['id']) for u in reversed(r) if 'message' in u),''))")
-          curl -s "https://api.telegram.org/bot$T/sendMessage" --data-urlencode "chat_id=$C" --data-urlencode "text=La video du jour a echoue : ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          [ -z "$C" ] && exit 0
+          curl -s -o /dev/null "https://api.telegram.org/bot$T/sendMessage" --data-urlencode "chat_id=$C" --data-urlencode "text=La video du jour a echoue : $URL"
+
+      - name: Signaler si Telegram n'a pas fonctionne
+        if: steps.video.outputs.telegram == 'echec'
+        run: |
+          echo "::warning::Video prete mais non envoyee sur Telegram. Copie privee : $VIDEOS_PAGE"
+          # mettre ALERTE_TELEGRAM=1 (variable du depot) pour etre prevenu par e-mail GitHub
+          [ "${{ vars.ALERTE_TELEGRAM }}" = "1" ] && exit 1 || exit 0

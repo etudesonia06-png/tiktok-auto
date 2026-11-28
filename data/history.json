@@ -24,5 +24,20 @@
     "best_time": "19:00",
     "status": "en attente de validation",
     "telegram": false
+  },
+  {
+    "date": "2026-11-28",
+    "title": "Le podium qui dérape",
+    "topic": "La troisième place de la France au relais mixte de Kontiolahti, racontée comme un match de football",
+    "mode": "football",
+    "engine": "3d",
+    "duration": 66.7,
+    "video": "output/2026-11-28/tiktok_2026-11-28.mp4",
+    "caption": "Les Bleus prennent la troisième place à Kontiolahti : le lion transforme le podium en match de football. Toi, tu célèbres ou tu réclames le titre ?\n\n#biathlon #sportfrançais #humourfoot #pourtoi",
+    "best_time": "19:00",
+    "status": "en attente de validation",
+    "telegram": false,
+    "text_source": "Pollinations",
+    "tiktok": "désactivé (publication manuelle après validation)"
   }
 ]

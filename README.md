@@ -3,11 +3,12 @@
 Chaque matin, sans ordinateur allumé, cette application :
 
 1. récupère les tendances du jour en France (Google Trends) et des sujets qui marchent toujours ;
-2. choisit le sujet et écrit un script de 61 à 75 s (Gemini, offre gratuite) : épisode de la série
+2. choisit le sujet et écrit un script de 65 à 90 s (Gemini, offre gratuite), à partir des tendances du jour (Google Trends + Google Actualités France et sport) : épisode de la série
    « De l'Algérie à la France » certains jours, sujet tendance les autres jours ;
-3. génère une voix off française naturelle (voix Microsoft Edge, gratuite) ;
+3. génère une voix française différente pour chaque personnage (voix Microsoft Edge, gratuites ; voix Piper hors ligne en secours) ;
 4. anime de vrais personnages 3D réutilisables avec Blender (gratuit) : mascotte lion, supporters aux couleurs des équipes,
-   personnages de la série ; bouche synchronisée sur la voix, clignements, gestes, stade, caméra plan par plan
+   personnages de la série (coiffures, foulard, casquette…) ; bouche synchronisée sur la voix, regards tournés vers celui qui parle,
+   sourcils expressifs, clignements, gestes ; trois décors (stade, studio parisien, rue de Paris la nuit) ; caméra plan par plan
    (secours automatique : séquences Pexels ou images IA si le rendu 3D échoue) ;
 5. fait le montage : 1080 × 1920, sous-titres dynamiques mot par mot, accroche, mots forts, ambiance de stade,
    sifflet, clameur et transitions sonores (sons synthétisés, libres de droits) ;
@@ -16,7 +17,7 @@ Chaque matin, sans ordinateur allumé, cette application :
 
 Tu n'as plus qu'à regarder la vidéo et à la publier si elle te plaît.
 
-**Coût : 0 €.** Tout tourne sur GitHub Actions. Le rendu 3D prend environ 45 à 90 minutes par vidéo :
+**Coût : 0 €.** Tout tourne sur GitHub Actions. Le rendu 3D prend environ 1 h 30 à 2 h par vidéo :
 utilise un dépôt **public** (minutes illimitées et gratuites ; tes clés restent secrètes). En dépôt privé,
 les 2 000 minutes gratuites par mois suffisent à peine, et GitHub met simplement la tâche en pause sans rien facturer.
 
@@ -39,13 +40,18 @@ les 2 000 minutes gratuites par mois suffisent à peine, et GitHub met simplemen
 Dépôt → **Settings → Secrets and variables → Actions → New repository secret**, puis ajoute les 4 secrets du tableau.
 
 ### 4. Lancer un premier test
-Dépôt → **Actions → Vidéo TikTok du jour → Run workflow**. Environ 8 minutes plus tard, la vidéo arrive sur Telegram.
-Ensuite, elle se lance toute seule chaque matin vers 6 h 17 (heure de Paris).
+Dépôt → **Actions → Vidéo TikTok du jour → Run workflow**. Environ 2 heures plus tard (rendu 3D), la vidéo arrive sur Telegram.
+Ensuite, elle se lance toute seule chaque matin vers 5 h (heure de Paris), ordinateur et téléphone éteints.
 
 ## Réglages (fichier `app/config.py` ou variables d'environnement)
 - `TTS_VOICE` : `fr-FR-HenriNeural` (homme), `fr-FR-DeniseNeural` ou `fr-FR-VivienneMultilingualNeural` (femme).
 - `SCHEDULE` (app/config.py) : foot 3D lundi, mercredi, jeudi, samedi ; série mardi et vendredi ; sujet viral le dimanche.
 - Musique de fond : ajoute plutôt un son tendance directement dans TikTok au moment de publier (meilleur pour l'algorithme et sans risque de droits d'auteur).
+
+## Diagnostic
+Chaque exécution commence par l'étape **« Verifier Gemini et Telegram »** : elle indique si la clé Gemini fonctionne
+et si le bot Telegram trouve ta conversation, sans jamais afficher les clés. L'identifiant de conversation Telegram est
+mémorisé dans le cache privé de GitHub Actions dès qu'il est trouvé (Telegram ne garde les messages que 24 h).
 
 ## Règles TikTok respectées
 - Contenu original uniquement, aucun faux abonné ni fausse vue.
