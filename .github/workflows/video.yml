@@ -111,6 +111,20 @@ jobs:
           BLENDER_BIN: /opt/blender/blender
         run: python main.py --check
 
+      - name: Tester la copie privee (mode verification)
+        if: github.event.inputs.check_only == 'oui'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          echo test > /tmp/test.txt
+          if gh release create "test-$TAG" /tmp/test.txt --draft --title test --notes test; then
+            echo "Copie privee : OK"; gh release delete "test-$TAG" --yes || true
+          else
+            echo "Copie privee : REFUSEE"
+            gh api -i -X POST "repos/$GITHUB_REPOSITORY/releases" -f tag_name="test-$TAG" -F draft=true 2>&1 \
+              | grep -iE "^HTTP|x-accepted-github-permissions|\"message\"" || true
+          fi
+
       - name: Creer la video
         id: video
         if: github.event.inputs.check_only != 'oui'
@@ -157,8 +171,12 @@ jobs:
             echo
             python3 -c "import json,sys;print(json.load(open(sys.argv[1]))['caption'])" "$P" 2>/dev/null || true
           } > /tmp/notes.md
-          gh release create "$TAG" "$V" --draft --title "Video du $(TZ=Europe/Paris date +%d/%m/%Y) : $TITLE" \
-            --notes-file /tmp/notes.md --target "$GITHUB_SHA" || echo "lien de secours non cree"
+          if ! gh release create "$TAG" "$V" --draft --title "Video du $(TZ=Europe/Paris date +%d/%m/%Y) : $TITLE" \
+               --notes-file /tmp/notes.md; then
+            echo "::warning::copie privee non creee"
+            echo "Permissions demandees par GitHub :"
+            gh api -i "repos/$GITHUB_REPOSITORY/releases?per_page=1" 2>&1 | grep -iE "^HTTP|x-accepted-github-permissions" || true
+          fi
           {
             echo "## 🎬 $TITLE ($DUR s)"
             echo "- Copie privee (connecte a GitHub) : $VIDEOS_PAGE"

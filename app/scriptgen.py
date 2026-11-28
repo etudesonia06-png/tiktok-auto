@@ -1,5 +1,6 @@
 """Choix du sujet + écriture du script avec Gemini (offre gratuite)."""
 import json
+import time
 import re
 from datetime import date
 
@@ -152,21 +153,34 @@ def _openai_like(url: str, headers: dict, model: str, prompt: str) -> dict:
     return _parse_json(content)
 
 
+GITHUB_ENDPOINTS = ("https://models.github.ai/inference/chat/completions",
+                    "https://models.inference.ai.azure.com/chat/completions")
+
+
 def _call_github_models(prompt: str) -> dict:
     last = None
-    for model in config.GITHUB_MODELS:
-        try:
-            return _openai_like("https://models.github.ai/inference/chat/completions",
-                                {"Authorization": f"Bearer {config.GITHUB_TOKEN}",
-                                 "Accept": "application/vnd.github+json"}, model, prompt)
-        except Exception as e:
-            last = e
-            print(f"[script] GitHub Models {model} : {e}")
+    for url in GITHUB_ENDPOINTS:
+        for model in config.GITHUB_MODELS:
+            m = model.split("/", 1)[1] if "azure" in url and "/" in model else model
+            try:
+                return _openai_like(url, {"Authorization": f"Bearer {config.GITHUB_TOKEN}",
+                                          "Content-Type": "application/json"}, m, prompt)
+            except Exception as e:
+                last = e
+                print(f"[script] GitHub Models {m} : {e}")
     raise RuntimeError(f"GitHub Models indisponible : {last}")
 
 
 def _call_pollinations(prompt: str) -> dict:
-    return _openai_like("https://text.pollinations.ai/openai", {}, "openai", prompt)
+    """Relais gratuit limité à une réponse toutes les 45 s : on attend puis on réessaie."""
+    for attempt in range(3):
+        try:
+            return _openai_like("https://text.pollinations.ai/openai", {}, "openai", prompt)
+        except RuntimeError as e:
+            if "402" not in str(e) and "429" not in str(e) or attempt == 2:
+                raise
+            print("[script] Pollinations : limite gratuite, nouvel essai dans 50 s")
+            time.sleep(50)
 
 
 def providers() -> list[tuple[str, callable]]:
