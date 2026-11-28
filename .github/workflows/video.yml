@@ -16,6 +16,9 @@ on:
       script:
         description: "script JSON du depot a utiliser (ex : scripts/test_panenka.json), vide = script du jour"
         default: ""
+      check_only:
+        description: "oui = seulement verifier Gemini et Telegram (1 minute)"
+        default: "non"
 
 permissions:
   contents: write
@@ -100,6 +103,7 @@ jobs:
         run: python main.py --check
 
       - name: Creer la video
+        if: github.event.inputs.check_only != 'oui'
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY || secrets.GEMINI_KEY || secrets.GOOGLE_API_KEY || secrets.GOOGLE_AI_API_KEY }}
           PEXELS_API_KEY: ${{ secrets.PEXELS_API_KEY }}
