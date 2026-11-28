@@ -138,8 +138,8 @@ def send_telegram(video: Path, post: dict, extra: str = "") -> bool:
             f"📝 Légende à copier :\n{post['caption']}\n\n"
             "✅ Pour publier : enregistre la vidéo → TikTok → + → Importer → colle la légende → "
             "ajoute un son tendance à faible volume → active « Contenu généré par l'IA ».")
-    if config.VIDEO_LINK:
-        text += f"\n\n🔗 Lien de secours : {config.VIDEO_LINK}"
+    if config.VIDEOS_PAGE:
+        text += f"\n\n🔒 Copie privée (connecte-toi à GitHub) : {config.VIDEOS_PAGE}"
     if extra:
         text += "\n\n" + extra
     try:
@@ -160,8 +160,8 @@ def send_telegram(video: Path, post: dict, extra: str = "") -> bool:
         if j.get("error_code") in (400, 403):  # conversation invalide ou bot bloqué : inutile d'insister
             break
     if not ok:  # au moins prévenir avec le texte
-        send_text(text + "\n\n⚠️ La vidéo n'a pas pu être jointe : télécharge-la avec le lien de secours"
-                  + (f" ou sur {config.VIDEOS_PAGE}" if config.VIDEOS_PAGE else "") + ".")
+        send_text(text + "\n\n⚠️ La vidéo n'a pas pu être jointe : récupère la copie privée"
+                  + (f" sur {config.VIDEOS_PAGE}" if config.VIDEOS_PAGE else " dans GitHub") + ".")
         return False
     if len(text) > 1000:
         _api("sendMessage", data={"chat_id": chat, "text": text})

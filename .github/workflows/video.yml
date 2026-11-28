@@ -94,12 +94,11 @@ jobs:
           sudo mkdir -p $BLENDER_DIR && sudo tar -xJf /tmp/b.tar.xz -C $BLENDER_DIR --strip-components=1
           sudo chown -R $USER $BLENDER_DIR
 
-      - name: Preparer le lien de secours
+      - name: Preparer la copie privee
         run: |
           D=$(TZ=Europe/Paris date +%F)
           TAG="video-$D-${{ github.run_number }}"
           echo "TAG=$TAG" >> "$GITHUB_ENV"
-          echo "VIDEO_LINK=${{ github.server_url }}/${{ github.repository }}/releases/download/$TAG/tiktok_$D.mp4" >> "$GITHUB_ENV"
           echo "VIDEOS_PAGE=${{ github.server_url }}/${{ github.repository }}/releases" >> "$GITHUB_ENV"
 
       - name: Verifier Gemini et Telegram (aucune valeur affichee)
@@ -122,7 +121,7 @@ jobs:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN || secrets.TELEGRAM_TOKEN || secrets.BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID || secrets.TELEGRAM_CHATID || secrets.CHAT_ID }}
           BLENDER_BIN: /opt/blender/blender
-          RENDER_BUDGET_MIN: "110"
+          RENDER_BUDGET_MIN: "90"
           TIKTOK_CLIENT_KEY: ${{ secrets.TIKTOK_CLIENT_KEY }}
           TIKTOK_CLIENT_SECRET: ${{ secrets.TIKTOK_CLIENT_SECRET }}
           TIKTOK_REFRESH_TOKEN: ${{ secrets.TIKTOK_REFRESH_TOKEN }}
@@ -141,7 +140,7 @@ jobs:
           [ -n "$S" ] && A="$A --script $S"
           python main.py $A || { echo "Nouvel essai en mode images"; ENGINE=images python main.py $A; }
 
-      - name: Lien de secours (page Releases du depot)
+      - name: Copie privee de la video (brouillon visible uniquement par le proprietaire)
         if: always() && steps.video.outputs.video != ''
         env:
           GH_TOKEN: ${{ github.token }}
@@ -158,12 +157,11 @@ jobs:
             echo
             python3 -c "import json,sys;print(json.load(open(sys.argv[1]))['caption'])" "$P" 2>/dev/null || true
           } > /tmp/notes.md
-          gh release create "$TAG" "$V" --title "Video du $(TZ=Europe/Paris date +%d/%m/%Y) : $TITLE" \
+          gh release create "$TAG" "$V" --draft --title "Video du $(TZ=Europe/Paris date +%d/%m/%Y) : $TITLE" \
             --notes-file /tmp/notes.md --target "$GITHUB_SHA" || echo "lien de secours non cree"
           {
             echo "## 🎬 $TITLE ($DUR s)"
-            echo "- Telecharger la video : $VIDEO_LINK"
-            echo "- Toutes les videos : $VIDEOS_PAGE"
+            echo "- Copie privee (connecte a GitHub) : $VIDEOS_PAGE"
             echo "- Telegram : ${{ steps.video.outputs.telegram }}"
           } >> "$GITHUB_STEP_SUMMARY"
           # ne garder que les videos des 14 derniers jours
@@ -184,18 +182,6 @@ jobs:
           echo "::add-mask::$(cat "$F")"
           [ -n "$GH_TOKEN" ] && gh secret set TIKTOK_REFRESH_TOKEN --repo "$GITHUB_REPOSITORY" < "$F" || echo "jeton non mis a jour"
           rm -f "$F"
-
-      - name: Video telechargeable 7 jours
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: video-${{ github.run_number }}
-          path: |
-            output/**/*.mp4
-            output/**/publication.json
-            output/**/script.json
-          retention-days: 7
-          if-no-files-found: ignore
 
       - name: Historique
         if: always()
@@ -225,5 +211,5 @@ jobs:
       - name: Prevenir par e-mail GitHub si Telegram n'a pas fonctionne
         if: steps.video.outputs.telegram == 'echec'
         run: |
-          echo "::error::Video prete mais non envoyee sur Telegram. Telechargement : $VIDEO_LINK"
+          echo "::error::Video prete mais non envoyee sur Telegram. Copie privee : $VIDEOS_PAGE"
           exit 1

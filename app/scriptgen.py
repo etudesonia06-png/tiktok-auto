@@ -174,9 +174,9 @@ def providers() -> list[tuple[str, callable]]:
     out = []
     if config.GEMINI_API_KEY:
         out.append(("Gemini", _call_gemini))
+    out.append(("Pollinations", _call_pollinations))
     if config.GITHUB_TOKEN:
         out.append(("GitHub Models", _call_github_models))
-    out.append(("Pollinations", _call_pollinations))
     return out
 
 
