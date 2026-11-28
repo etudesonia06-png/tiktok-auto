@@ -208,8 +208,9 @@ jobs:
           [ -z "$C" ] && exit 0
           curl -s -o /dev/null "https://api.telegram.org/bot$T/sendMessage" --data-urlencode "chat_id=$C" --data-urlencode "text=La video du jour a echoue : $URL"
 
-      - name: Prevenir par e-mail GitHub si Telegram n'a pas fonctionne
+      - name: Signaler si Telegram n'a pas fonctionne
         if: steps.video.outputs.telegram == 'echec'
         run: |
-          echo "::error::Video prete mais non envoyee sur Telegram. Copie privee : $VIDEOS_PAGE"
-          exit 1
+          echo "::warning::Video prete mais non envoyee sur Telegram. Copie privee : $VIDEOS_PAGE"
+          # mettre ALERTE_TELEGRAM=1 (variable du depot) pour etre prevenu par e-mail GitHub
+          [ "${{ vars.ALERTE_TELEGRAM }}" = "1" ] && exit 1 || exit 0
