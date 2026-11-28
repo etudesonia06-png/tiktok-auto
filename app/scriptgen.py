@@ -153,8 +153,7 @@ def _openai_like(url: str, headers: dict, model: str, prompt: str) -> dict:
     return _parse_json(content)
 
 
-GITHUB_ENDPOINTS = ("https://models.github.ai/inference/chat/completions",
-                    "https://models.inference.ai.azure.com/chat/completions")
+GITHUB_ENDPOINTS = ("https://models.github.ai/inference/chat/completions",)
 
 
 def _call_github_models(prompt: str) -> dict:
