@@ -14,24 +14,24 @@ from . import config
 
 SCENE_SCRIPT = Path(__file__).with_name("blender_scene.py")
 
-# Bibliothèque de personnages réutilisables
+# Bibliothèque de personnages réutilisables : apparence (pour Blender) + voix (Edge TTS : voix, débit, hauteur)
 LIBRARY = {
-    "lion": {"type": "lion", "voice": "fr-FR-HenriNeural",
-             "colors": ["#ffffff", "#1fa34a", "#f6c21c", "#d62828"]},
-    "supporter_rouge": {"type": "supporter", "voice": "fr-FR-RemyMultilingualNeural",
-                        "colors": ["#c1272d", "#006233"], "skin": "#c68642"},
-    "supporter_vert": {"type": "supporter", "voice": "fr-FR-DeniseNeural",
-                       "colors": ["#00853f", "#fdef42"], "skin": "#8d5524"},
-    "supporter_bleu": {"type": "supporter", "voice": "fr-FR-EloiseNeural",
-                       "colors": ["#1d3c8f", "#ffffff"], "skin": "#f1c27d"},
-    "yanis": {"type": "person", "voice": "fr-FR-RemyMultilingualNeural",
-              "colors": ["#2f5d8a", "#e8e8e8"], "skin": "#e0ac69"},
-    "nadia": {"type": "person", "voice": "fr-FR-DeniseNeural",
-              "colors": ["#7b2d5b", "#f2c94c"], "skin": "#c68642"},
-    "amar": {"type": "person", "voice": "fr-FR-HenriNeural",
-             "colors": ["#4a4a4a", "#c9a227"], "skin": "#a0522d"},
-    "sofiane": {"type": "person", "voice": "fr-FR-RemyMultilingualNeural",
-                "colors": ["#1b7f5f", "#ffffff"], "skin": "#8d5524"},
+    "lion": {"type": "lion", "voice": "fr-FR-HenriNeural", "rate": "+6%", "pitch": "-8Hz",
+             "colors": ["#ffffff", "#1fa34a", "#f6c21c", "#d62828"], "height": 1.0},
+    "supporter_rouge": {"type": "supporter", "voice": "fr-FR-RemyMultilingualNeural", "rate": "+10%", "pitch": "+0Hz",
+                        "colors": ["#c1272d", "#006233"], "skin": "#c68642", "hair": "short", "height": 1.0},
+    "supporter_vert": {"type": "supporter", "voice": "fr-FR-HenriNeural", "rate": "+14%", "pitch": "+7Hz",
+                       "colors": ["#00853f", "#fdef42"], "skin": "#8d5524", "hair": "beard", "height": 0.95},
+    "supporter_bleu": {"type": "supporter", "voice": "fr-FR-DeniseNeural", "rate": "+10%", "pitch": "+0Hz",
+                       "colors": ["#1d3c8f", "#ffffff"], "skin": "#f1c27d", "hair": "ponytail", "height": 0.92},
+    "yanis": {"type": "person", "voice": "fr-FR-RemyMultilingualNeural", "rate": "+6%", "pitch": "+0Hz",
+              "colors": ["#2f5d8a", "#e8e8e8"], "skin": "#e0ac69", "hair": "curly", "height": 1.0},
+    "nadia": {"type": "person", "voice": "fr-FR-VivienneMultilingualNeural", "rate": "+0%", "pitch": "-2Hz",
+              "colors": ["#7b2d5b", "#f2c94c"], "skin": "#c68642", "hair": "scarf", "height": 0.9},
+    "amar": {"type": "person", "voice": "fr-FR-HenriNeural", "rate": "-4%", "pitch": "-10Hz",
+             "colors": ["#4a4a4a", "#c9a227"], "skin": "#a0522d", "hair": "grey_moustache", "height": 0.98},
+    "sofiane": {"type": "person", "voice": "fr-FR-HenriNeural", "rate": "+12%", "pitch": "+6Hz",
+                "colors": ["#1b7f5f", "#ffffff"], "skin": "#8d5524", "hair": "cap", "height": 1.02},
 }
 DEFAULT_CAST = {"football": ["supporter_rouge", "lion", "supporter_vert"],
                 "series": ["nadia", "yanis", "sofiane"],
@@ -69,6 +69,8 @@ def prepare_cast(script: dict) -> list[dict]:
             sp = ids[i % len(ids)] if mode != "series" else ids[min(1, len(ids) - 1)]
         sc["speaker"] = sp
         sc["voice"] = voices[sp]
+        sc["rate"] = LIBRARY[sp].get("rate", "")
+        sc["pitch"] = LIBRARY[sp].get("pitch", "")
     return cast
 
 
@@ -93,20 +95,37 @@ def build_spec(script: dict, scenes: list[dict], cast: list[dict], fps: int, w: 
     env = {c["id"]: [0.0] * total for c in cast}
     speaker_at = [""] * total
     shots, start = [], 0
+    prev = scenes[0]["speaker"]
     for i, sc in enumerate(scenes):
         n = int(round(sc["duration"] * fps))
         n = min(n, total - start)
         e = envelope(sc["audio"], n, fps)
         env[sc["speaker"]][start:start + n] = e
         speaker_at[start:start + n] = [sc["speaker"]] * n
-        wide = i == 0 or i == len(scenes) - 1 or i % 4 == 3
-        shots.append({"start": start, "end": start + n - 1, "speaker": sc["speaker"],
-                      "type": "wide" if wide else "close"})
+        sp = sc["speaker"]
+        if i == 0:
+            kinds = ["wide_push"]
+        elif i == len(scenes) - 1:
+            kinds = ["close", "wide"]
+        else:
+            kinds = [["close", "medium", "low", "over"][i % 4]]
+            if n > 5.5 * fps:  # longue réplique : plan de réaction ou plan à deux au milieu
+                kinds += [["reaction", "two", "close"][i % 3]]
+        cut = start
+        for k, kind in enumerate(kinds):
+            end = start + n - 1 if k == len(kinds) - 1 else start + int(n * (0.62 if len(kinds) == 2 else 1))
+            listener = prev if prev != sp else next((c["id"] for c in cast if c["id"] != sp), sp)
+            shots.append({"start": cut, "end": max(cut, end), "speaker": sp, "listener": listener, "type": kind})
+            cut = end + 1
+        prev = sp
         start += n
-    last = shots[-1]
-    cheer = list(range(last["start"], last["end"] + 1)) if script.get("mode") == "football" else []
+    last_start = total - int(round(scenes[-1]["duration"] * fps))
+    cheer = list(range(max(0, last_start), total)) if script.get("mode") == "football" else []
     crowd = [c["colors"][0] for c in cast if c["type"] == "supporter"][:2] or ["#c1272d", "#006233"]
+    emph = [int(round(sum(x["duration"] for x in scenes[:i]) * fps)) for i, x in enumerate(scenes) if x.get("onscreen")]
     return {"fps": fps, "width": w, "height": h, "total_frames": total, "cast": cast,
+            "setting": script.get("setting") or {"series": "apartment", "trend": "street"}.get(
+                script.get("mode"), "stadium"), "emphasis": emph,
             "envelopes": env, "speaker_at": speaker_at, "shots": shots, "cheer_frames": cheer,
             "crowd_colors": crowd + ["#ffffff"], "samples": int(os.getenv("RENDER_SAMPLES", "8")),
             "seed": abs(hash(script.get("title", ""))) % 1000}
@@ -134,23 +153,30 @@ def render(script: dict, scenes: list[dict], cast: list[dict], workdir: Path) ->
     import time
     if not blender_bin():
         raise RuntimeError("Blender introuvable (variable BLENDER_BIN)")
-    budget = float(os.getenv("RENDER_BUDGET_MIN", "45")) * 60
+    budget = float(os.getenv("RENDER_BUDGET_MIN", "100")) * 60
     frames = workdir / "frames"
-    # --- test de vitesse : 4 images au palier le plus beau
+    # --- test de vitesse : 6 images au palier le plus beau ; on mesure l'écart entre la 1re et la
+    # dernière image écrites (la construction de la scène n'est pas comptée)
     fps, rw, rh, spp = QUALITY_LADDER[0]
     spec = build_spec(script, scenes, cast, fps, rw, rh)
-    spec.update(samples=spp, frame_start=1, frame_end=4)
+    spec.update(samples=spp, frame_start=1, frame_end=6)
     t0 = time.time()
-    _run_blender(spec, workdir, frames, timeout_s=600)
-    per_frame = (time.time() - t0) / 4  # prudent : inclut la préparation de la scène
+    _run_blender(spec, workdir, frames, timeout_s=900)
+    elapsed = time.time() - t0
+    stamps = sorted(f.stat().st_mtime for f in frames.glob("f_*.jpg"))
+    if len(stamps) >= 3:
+        per_frame = (stamps[-1] - stamps[0]) / (len(stamps) - 1) * 1.1  # marge de 10 %
+        setup = max(0.0, elapsed - per_frame * len(stamps))
+    else:
+        per_frame, setup = elapsed / 6, 0.0
     shutil.rmtree(frames, ignore_errors=True)
-    print(f"   Test de vitesse : {per_frame:.1f} s par image")
+    print(f"   Test de vitesse : {per_frame:.1f} s par image (+ {setup:.0f} s de préparation)")
     # --- choix du palier qui tient dans le budget
     base_cost = rw * rh * spp
     choice = None
     for f, w, h, n in QUALITY_LADDER:
         total = int(round(sum(s["duration"] for s in scenes) * f))
-        est = per_frame * (w * h * n) / base_cost * total
+        est = per_frame * (w * h * n) / base_cost * total + setup
         print(f"   Palier {f} i/s {w}x{h} {n} éch. : environ {est / 60:.0f} min")
         if est <= budget:
             choice = (f, w, h, n)

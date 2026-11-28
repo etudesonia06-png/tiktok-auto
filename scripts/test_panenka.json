@@ -1,0 +1,92 @@
+{
+  "topic": "La Panenka ratée à 1-0",
+  "title": "La Panenka ratée",
+  "hook": "Quand tu tentes la Panenka à 1-0…",
+  "mode": "football",
+  "cast": [
+    {
+      "id": "supporter_rouge",
+      "colors": [
+        "#f57a1e",
+        "#1b2350"
+      ]
+    },
+    {
+      "id": "lion"
+    },
+    {
+      "id": "supporter_vert",
+      "colors": [
+        "#28af5f",
+        "#111111"
+      ]
+    }
+  ],
+  "scenes": [
+    {
+      "speaker": "lion",
+      "narration": "Momo, écoute-moi bien. On mène un-zéro, il reste vingt minutes. Tu tires fort, sur le côté. Simple.",
+      "onscreen": "SIMPLE."
+    },
+    {
+      "speaker": "supporter_rouge",
+      "narration": "Simple, coach ? Simple, c'est pour les gens simples. Moi, je suis un artiste.",
+      "onscreen": "UN ARTISTE 😎"
+    },
+    {
+      "speaker": "supporter_vert",
+      "narration": "Hé, l'artiste. Je te connais. Je sais exactement ce que tu vas faire.",
+      "onscreen": "LE GARDIEN 🧤"
+    },
+    {
+      "speaker": "supporter_rouge",
+      "narration": "Non. Tu ne sais rien du tout. … Non ? Bon, peut-être un tout petit peu.",
+      "onscreen": "NON ?"
+    },
+    {
+      "speaker": "lion",
+      "narration": "Il prend un élan de huit mètres… Nooon, pas la pichenette ! Pas à un-zéro, Momo !",
+      "onscreen": "PAS LA PICHENETTE"
+    },
+    {
+      "speaker": "supporter_vert",
+      "narration": "Hop. Je ne bouge pas. Une seule main. Merci pour la passe, champion.",
+      "onscreen": "ARRÊTÉ 🧤"
+    },
+    {
+      "speaker": "supporter_rouge",
+      "narration": "Coach… sois honnête. Si elle était rentrée, tu m'aurais applaudi, non ?",
+      "onscreen": "ET SI…"
+    },
+    {
+      "speaker": "lion",
+      "narration": "Si elle était rentrée, oui. Là… je vais t'applaudir quand même. Très. Lentement.",
+      "onscreen": "👏 … 👏"
+    },
+    {
+      "speaker": "lion",
+      "narration": "Et demain matin, entraînement spécial : deux cents penaltys. Tous en force. Aucune exception.",
+      "onscreen": "200 PENALTYS"
+    },
+    {
+      "speaker": "supporter_rouge",
+      "narration": "Deux cents ? Coach, la Panenka, c'est dans mon cœur. Elle me suit partout.",
+      "onscreen": "ELLE ME SUIT"
+    },
+    {
+      "speaker": "supporter_vert",
+      "narration": "Même à l'entraînement, je serai là. Alors, la Panenka à un-zéro : génie ou folie ? Dis-le en commentaire !",
+      "onscreen": "GÉNIE OU FOLIE ?"
+    }
+  ],
+  "description": "Il a tenté la Panenka à 1-0… Le coach n'était pas prêt 😭 Toi tu l'aurais tentée ? 👇 (Sketch animé, personnages fictifs.)",
+  "hashtags": [
+    "#panenka",
+    "#football",
+    "#penalty",
+    "#humourfoot",
+    "#pourtoi"
+  ],
+  "cta": "Abonne-toi pour la suite !",
+  "best_time": "18:30"
+}

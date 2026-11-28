@@ -75,10 +75,13 @@ def build(script: dict, scenes: list[dict], dest: Path, credit: str = "") -> Pat
                 lines.append(f"Dialogue: 1,{_ts(offset + st)},{_ts(offset + en)},Sub,,0,0,0,,"
                              f"{pop}{' '.join(parts)}")
         if sc.get("onscreen"):
-            s0 = offset + 0.05
-            lines.append(f"Dialogue: 0,{_ts(s0)},{_ts(offset + min(sc['duration'], 2.2))},Big,,0,0,0,,"
-                         r"{\an5\pos(540,820)\fad(80,150)\t(0,150,\fscx115\fscy115)\t(150,300,\fscx100\fscy100)}"
-                         f"{_esc(sc['onscreen']).upper()}")
+            # au-dessus des têtes (ne masque pas les visages en gros plan), après l'accroche
+            s0 = offset + (2.7 if offset < 2.7 else 0.05)
+            s1 = min(offset + sc["duration"], s0 + 2.2)
+            if s1 - s0 > 0.8:
+                lines.append(f"Dialogue: 0,{_ts(s0)},{_ts(s1)},Big,,0,0,0,,"
+                             r"{\an5\pos(540,400)\fad(80,150)\t(0,150,\fscx115\fscy115)\t(150,300,\fscx100\fscy100)}"
+                             f"{_esc(sc['onscreen']).upper()}")
         offset += sc["duration"]
     if credit:
         lines.append(f"Dialogue: 0,{_ts(0)},{_ts(offset)},Credit,,0,0,0,,{_esc(credit)}")

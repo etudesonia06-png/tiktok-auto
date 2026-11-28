@@ -1,6 +1,7 @@
 """Voix off française naturelle avec Microsoft Edge TTS (gratuit, sans clé),
 avec horodatage mot par mot pour des sous-titres synchronisés."""
 import asyncio
+import os
 import re
 import subprocess
 from pathlib import Path
@@ -15,12 +16,13 @@ def _probe_duration(path: Path) -> float:
     return float(out.strip())
 
 
-async def _edge(text: str, mp3: Path, voice: str) -> list[tuple[float, float, str]]:
+async def _edge(text: str, mp3: Path, voice: str, rate: str = "", pitch: str = "") -> list[tuple[float, float, str]]:
     import edge_tts
+    kw = {"rate": rate or config.VOICE_RATE, "pitch": pitch or "+0Hz"}
     try:
-        com = edge_tts.Communicate(text, voice, rate=config.VOICE_RATE, boundary="WordBoundary")
+        com = edge_tts.Communicate(text, voice, boundary="WordBoundary", **kw)
     except TypeError:  # anciennes versions
-        com = edge_tts.Communicate(text, voice, rate=config.VOICE_RATE)
+        com = edge_tts.Communicate(text, voice, **kw)
     words = []
     with open(mp3, "wb") as f:
         async for chunk in com.stream():
@@ -30,6 +32,42 @@ async def _edge(text: str, mp3: Path, voice: str) -> list[tuple[float, float, st
                 s = chunk["offset"] / 1e7
                 words.append((s, s + chunk["duration"] / 1e7, chunk["text"]))
     return words
+
+
+PIPER_VOICES = {  # voix françaises Piper (gratuites, hors ligne) — secours si Edge est indisponible
+    "male": "fr/fr_FR/tom/medium/fr_FR-tom-medium",
+    "female": "fr/fr_FR/siwis/medium/fr_FR-siwis-medium",
+}
+FEMALE = ("Denise", "Eloise", "Vivienne")
+
+
+def _piper(text: str, out: Path, voice: str, pitch: str = ""):
+    """Synthèse Piper puis léger changement de hauteur pour distinguer les personnages."""
+    import urllib.request
+    import wave as _w
+    from piper import PiperVoice
+    base = Path(os.getenv("PIPER_DIR", Path.home() / ".piper"))
+    base.mkdir(parents=True, exist_ok=True)
+    rel = PIPER_VOICES["female" if any(f in voice for f in FEMALE) else "male"]
+    model = base / (rel.split("/")[-1] + ".onnx")
+    for ext in (".onnx", ".onnx.json"):
+        f = base / (rel.split("/")[-1] + ext)
+        if not f.exists():
+            urllib.request.urlretrieve(f"https://huggingface.co/rhasspy/piper-voices/resolve/main/{rel}{ext}", f)
+    wav = out.with_suffix(".piper.wav")
+    v = PiperVoice.load(str(model))
+    with _w.open(str(wav), "wb") as wf:
+        if hasattr(v, "synthesize_wav"):
+            v.synthesize_wav(text, wf)
+        else:
+            v.synthesize(text, wf)
+    hz = int(re.sub(r"[^\d-]", "", pitch or "0") or 0)
+    k = 1 + hz / 150  # +/- Hz -> facteur de hauteur approximatif
+    sr = v.config.sample_rate
+    af = f"asetrate={sr}*{k:.3f},aresample=24000,atempo={1 / k:.4f}" if hz else "aresample=24000"
+    subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i", str(wav), "-af", af, "-q:a", "3", str(out)],
+                   check=True)
+    wav.unlink(missing_ok=True)
 
 
 def _estimate_words(text: str, total: float) -> list[tuple[float, float, str]]:
@@ -65,11 +103,24 @@ def synthesize(scenes: list[dict], workdir: Path) -> list[dict]:
         text = sc["narration"].strip()
         mp3 = workdir / f"voice_{i:02d}.mp3"
         words = None
+        voice = sc.get("voice") or config.VOICE
         if not config.OFFLINE:
-            try:
-                words = asyncio.run(asyncio.wait_for(_edge(text, mp3, sc.get("voice") or config.VOICE), timeout=60))
-            except Exception as e:
-                print(f"[voix] Edge TTS indisponible ({e}), voix muette de secours")
+            for attempt in range(3):
+                try:
+                    words = asyncio.run(asyncio.wait_for(
+                        _edge(text, mp3, voice, sc.get("rate", ""), sc.get("pitch", "")), timeout=60))
+                    if mp3.exists() and mp3.stat().st_size > 1000:
+                        break
+                    words = None
+                except Exception as e:
+                    print(f"[voix] Edge TTS essai {attempt + 1} : {e}")
+            if words is None:
+                try:
+                    _piper(text, mp3, voice, sc.get("pitch", ""))
+                    words = []
+                    print("[voix] voix de secours Piper utilisée")
+                except Exception as e:
+                    print(f"[voix] Piper indisponible ({e}), voix muette de secours")
         if words is None:
             est = max(1.5, len(text.split()) / 2.7)
             _silent(est, mp3)
