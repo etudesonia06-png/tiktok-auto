@@ -145,7 +145,11 @@ def _openai_like(url: str, headers: dict, model: str, prompt: str) -> dict:
         "response_format": {"type": "json_object"}})
     if r.status_code != 200:
         raise RuntimeError(f"HTTP {r.status_code} {r.text[:200]}")
-    return _parse_json(r.json()["choices"][0]["message"]["content"])
+    try:
+        content = r.json()["choices"][0]["message"]["content"]
+    except Exception:
+        raise RuntimeError(f"réponse inattendue : {r.text[:160]!r}")
+    return _parse_json(content)
 
 
 def _call_github_models(prompt: str) -> dict:
