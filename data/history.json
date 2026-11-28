@@ -11,5 +11,18 @@
     "best_time": "19:00",
     "status": "en attente de validation",
     "telegram": false
+  },
+  {
+    "date": "2026-11-28",
+    "title": "Le pari du lion",
+    "topic": "Le supporter qui ne veut jamais perdre",
+    "mode": "football",
+    "engine": "3d",
+    "duration": 50.0,
+    "video": "output/2026-11-28/tiktok_2026-11-28.mp4",
+    "caption": "Il est trop fort ce lion 😂 Et toi, tu aurais parié sur qui ? 👇\n\n#pourtoi #football #humour #supporters #animation3d",
+    "best_time": "19:00",
+    "status": "en attente de validation",
+    "telegram": false
   }
 ]
