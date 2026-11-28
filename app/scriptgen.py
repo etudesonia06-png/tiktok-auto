@@ -137,6 +137,56 @@ def _call_gemini(prompt: str) -> dict:
     raise RuntimeError(f"Gemini indisponible : {last_err}")
 
 
+def _openai_like(url: str, headers: dict, model: str, prompt: str) -> dict:
+    r = requests.post(url, headers=headers, timeout=180, json={
+        "model": model, "temperature": 0.95,
+        "messages": [{"role": "system", "content": "Tu réponds uniquement avec un objet JSON valide."},
+                     {"role": "user", "content": prompt}],
+        "response_format": {"type": "json_object"}})
+    if r.status_code != 200:
+        raise RuntimeError(f"HTTP {r.status_code} {r.text[:200]}")
+    return _parse_json(r.json()["choices"][0]["message"]["content"])
+
+
+def _call_github_models(prompt: str) -> dict:
+    last = None
+    for model in config.GITHUB_MODELS:
+        try:
+            return _openai_like("https://models.github.ai/inference/chat/completions",
+                                {"Authorization": f"Bearer {config.GITHUB_TOKEN}",
+                                 "Accept": "application/vnd.github+json"}, model, prompt)
+        except Exception as e:
+            last = e
+            print(f"[script] GitHub Models {model} : {e}")
+    raise RuntimeError(f"GitHub Models indisponible : {last}")
+
+
+def _call_pollinations(prompt: str) -> dict:
+    return _openai_like("https://text.pollinations.ai/openai", {}, "openai", prompt)
+
+
+def providers() -> list[tuple[str, callable]]:
+    """Fournisseurs de texte gratuits, dans l'ordre de préférence."""
+    out = []
+    if config.GEMINI_API_KEY:
+        out.append(("Gemini", _call_gemini))
+    if config.GITHUB_TOKEN:
+        out.append(("GitHub Models", _call_github_models))
+    out.append(("Pollinations", _call_pollinations))
+    return out
+
+
+def _call_llm(prompt: str) -> tuple[dict, str]:
+    last = None
+    for name, fn in providers():
+        try:
+            return fn(prompt), name
+        except Exception as e:
+            last = e
+            print(f"[script] {name} indisponible : {e}")
+    raise RuntimeError(f"aucun fournisseur de texte disponible : {last}")
+
+
 def _validate(s: dict) -> dict:
     scenes = [sc for sc in s.get("scenes", []) if sc.get("narration", "").strip()]
     if len(scenes) < 4:
@@ -234,7 +284,7 @@ DEMO_SERIES = {
 def demo_football(i: int = 0) -> dict:
     import copy
     d = copy.deepcopy(DEMOS_FOOT[i % len(DEMOS_FOOT)])
-    d.update(best_time="19:00", mode="football")
+    d.update(best_time="19:00", mode="football", source="secours")
     return _validate(d)
 
 
@@ -246,7 +296,7 @@ def demo_script(mode: str, i: int = 0) -> dict:
         d["mode"] = mode
         return d
     d = copy.deepcopy(DEMO_SERIES)
-    d.update(best_time="19:00", mode=mode)
+    d.update(best_time="19:00", mode=mode, source="secours")
     return _validate(d)
 
 
@@ -254,16 +304,18 @@ def generate(candidates: list[dict], history: list[dict], insights: str = "",
              mode: str | None = None, feedback: str = "") -> dict:
     if mode is None:
         mode = config.SCHEDULE.get(date.today().weekday(), "football")
-    if config.OFFLINE or not config.GEMINI_API_KEY:
-        print("[script] clé Gemini absente ou mode hors ligne : script de secours")
+    if config.OFFLINE:
+        print("[script] mode hors ligne : script de secours")
         return demo_script(mode, len(history))
     prompt = _prompt(mode, candidates, history, insights)
     lo, hi = word_range()
     best = None
     for attempt in range(4):
         try:
-            s = _validate(_call_gemini(prompt + ("\n" + feedback if feedback else "")))
+            raw, source = _call_llm(prompt + ("\n" + feedback if feedback else ""))
+            s = _validate(raw)
             s["mode"] = mode
+            s["source"] = source
             n = word_count(s)
             print(f"   → essai {attempt + 1} : {n} mots (visé {lo}-{hi})")
             if best is None or abs(n - (lo + hi) / 2) < abs(word_count(best) - (lo + hi) / 2):
@@ -276,5 +328,5 @@ def generate(candidates: list[dict], history: list[dict], insights: str = "",
             print(f"[script] tentative {attempt + 1} échouée : {e}")
     if best is not None and word_count(best) >= lo * 0.8:
         return best
-    print("[script] échec Gemini, script de secours")
+    print("[script] aucun fournisseur disponible, script de secours")
     return demo_script(mode, len(history))

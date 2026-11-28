@@ -22,6 +22,7 @@ on:
 
 permissions:
   contents: write
+  models: read
 
 concurrency:
   group: daily-video
@@ -93,8 +94,17 @@ jobs:
           sudo mkdir -p $BLENDER_DIR && sudo tar -xJf /tmp/b.tar.xz -C $BLENDER_DIR --strip-components=1
           sudo chown -R $USER $BLENDER_DIR
 
+      - name: Preparer le lien de secours
+        run: |
+          D=$(TZ=Europe/Paris date +%F)
+          TAG="video-$D-${{ github.run_number }}"
+          echo "TAG=$TAG" >> "$GITHUB_ENV"
+          echo "VIDEO_LINK=${{ github.server_url }}/${{ github.repository }}/releases/download/$TAG/tiktok_$D.mp4" >> "$GITHUB_ENV"
+          echo "VIDEOS_PAGE=${{ github.server_url }}/${{ github.repository }}/releases" >> "$GITHUB_ENV"
+
       - name: Verifier Gemini et Telegram (aucune valeur affichee)
         env:
+          GITHUB_MODELS_TOKEN: ${{ github.token }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY || secrets.GEMINI_KEY || secrets.GOOGLE_API_KEY || secrets.GOOGLE_AI_API_KEY }}
           PEXELS_API_KEY: ${{ secrets.PEXELS_API_KEY }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN || secrets.TELEGRAM_TOKEN || secrets.BOT_TOKEN }}
@@ -103,8 +113,10 @@ jobs:
         run: python main.py --check
 
       - name: Creer la video
+        id: video
         if: github.event.inputs.check_only != 'oui'
         env:
+          GITHUB_MODELS_TOKEN: ${{ github.token }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY || secrets.GEMINI_KEY || secrets.GOOGLE_API_KEY || secrets.GOOGLE_AI_API_KEY }}
           PEXELS_API_KEY: ${{ secrets.PEXELS_API_KEY }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN || secrets.TELEGRAM_TOKEN || secrets.BOT_TOKEN }}
@@ -128,6 +140,39 @@ jobs:
           [ "${{ github.event_name }}" = "push" ] && [ -f scripts/test_panenka.json ] && S="scripts/test_panenka.json"
           [ -n "$S" ] && A="$A --script $S"
           python main.py $A || { echo "Nouvel essai en mode images"; ENGINE=images python main.py $A; }
+
+      - name: Lien de secours (page Releases du depot)
+        if: always() && steps.video.outputs.video != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          V: ${{ steps.video.outputs.video }}
+          TITLE: ${{ steps.video.outputs.title }}
+          DUR: ${{ steps.video.outputs.duration }}
+        run: |
+          [ -f "$V" ] || exit 0
+          P="$(dirname "$V")/publication.json"
+          {
+            echo "**$TITLE** ($DUR s) - en attente de validation, a publier manuellement sur TikTok."
+            echo
+            echo "Legende :"
+            echo
+            python3 -c "import json,sys;print(json.load(open(sys.argv[1]))['caption'])" "$P" 2>/dev/null || true
+          } > /tmp/notes.md
+          gh release create "$TAG" "$V" --title "Video du $(TZ=Europe/Paris date +%d/%m/%Y) : $TITLE" \
+            --notes-file /tmp/notes.md --target "$GITHUB_SHA" || echo "lien de secours non cree"
+          {
+            echo "## 🎬 $TITLE ($DUR s)"
+            echo "- Telecharger la video : $VIDEO_LINK"
+            echo "- Toutes les videos : $VIDEOS_PAGE"
+            echo "- Telegram : ${{ steps.video.outputs.telegram }}"
+          } >> "$GITHUB_STEP_SUMMARY"
+          # ne garder que les videos des 14 derniers jours
+          limit=$(date -d '14 days ago' +%s)
+          gh release list --limit 100 --json tagName,createdAt \
+            --jq '.[] | select(.tagName|startswith("video-")) | "\(.tagName) \(.createdAt)"' |
+          while read -r t c; do
+            [ "$(date -d "$c" +%s)" -lt "$limit" ] && gh release delete "$t" --yes --cleanup-tag || true
+          done
 
       - name: Ranger le nouveau jeton TikTok dans les secrets chiffres
         if: always()
@@ -176,3 +221,9 @@ jobs:
           [ -z "$C" ] && C=$(curl -s "https://api.telegram.org/bot$T/getUpdates" | python3 -c "import sys,json;r=json.load(sys.stdin).get('result',[]);print(next((str(u['message']['chat']['id']) for u in reversed(r) if 'message' in u),''))")
           [ -z "$C" ] && exit 0
           curl -s -o /dev/null "https://api.telegram.org/bot$T/sendMessage" --data-urlencode "chat_id=$C" --data-urlencode "text=La video du jour a echoue : $URL"
+
+      - name: Prevenir par e-mail GitHub si Telegram n'a pas fonctionne
+        if: steps.video.outputs.telegram == 'echec'
+        run: |
+          echo "::error::Video prete mais non envoyee sur Telegram. Telechargement : $VIDEO_LINK"
+          exit 1

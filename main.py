@@ -22,13 +22,14 @@ from app import (analytics, animation3d, config, music, publish, render, scriptg
 
 def check() -> int:
     print("Vérification de la configuration (aucune valeur secrète n'est affichée)")
-    print(f" - Gemini : {'clé présente' if config.GEMINI_API_KEY else 'CLÉ ABSENTE (secret GEMINI_API_KEY)'}")
-    if config.GEMINI_API_KEY and not config.OFFLINE:
-        try:
-            r = scriptgen._call_gemini('Réponds uniquement {"ok": true} en JSON.')
-            print(f" - Gemini : réponse OK {r}")
-        except Exception as e:
-            print(f" - Gemini : ERREUR {e}")
+    print(f" - Gemini : {'clé présente' if config.GEMINI_API_KEY else 'clé absente (relais gratuit utilisé)'}")
+    if not config.OFFLINE:
+        for name, fn in scriptgen.providers():
+            try:
+                fn('Réponds uniquement {"ok": true} en JSON.')
+                print(f" - Texte {name} : OK")
+            except Exception as e:
+                print(f" - Texte {name} : indisponible ({str(e)[:150]})")
     print(f" - Telegram : {publish.check()}")
     print(f" - Pexels (secours) : {'clé présente' if config.PEXELS_API_KEY else 'absente (facultatif)'}")
     print(f" - Blender : {animation3d.blender_bin() or 'absent (mode images)'}")
@@ -76,13 +77,14 @@ def main() -> int:
         else:
             script = scriptgen.generate(cands, history, analytics.insights(), args.mode, feedback)
         print(f"   → {script['title']} ({script.get('mode')}, {len(script['scenes'])} scènes, "
-              f"{scriptgen.word_count(script)} mots, décor {script.get('setting')})")
+              f"{scriptgen.word_count(script)} mots, décor {script.get('setting')}, "
+              f"texte : {script.get('source', '?')})")
         cast = animation3d.prepare_cast(script)  # orateur + voix par scène
         print("3/6 Voix off…")
         scenes = tts.synthesize(script["scenes"], work)
         total = sum(s["duration"] for s in scenes)
         print(f"   → durée {total:.1f} s")
-        if total >= lo or args.script or config.OFFLINE or not config.GEMINI_API_KEY:
+        if total >= lo or args.script or config.OFFLINE or script.get("source") == "secours":
             break
         words = scriptgen.word_count(script)
         need = int(words * (lo + 8) / max(total, 1))
@@ -140,11 +142,17 @@ def main() -> int:
     print(f"   → vidéo : {total:.1f} s, {video.stat().st_size / 1e6:.1f} Mo, moteur {engine}")
     sent = publish.send_telegram(video, post, warn)
     print(f"   → Telegram : {'envoyée ✅' if sent else 'NON envoyée ❌'}")
+    gh_out = os.getenv("GITHUB_OUTPUT")
+    if gh_out:  # informe le workflow (lien de secours, alerte e-mail si Telegram échoue)
+        with open(gh_out, "a", encoding="utf-8") as f:
+            f.write(f"telegram={'ok' if sent else 'echec'}\nvideo={video}\ntitle={script['title']}\n"
+                    f"duration={total:.0f}\nsource={script.get('source', '?')}\n")
     analytics.add_history({"date": slug, "title": script["title"], "topic": script.get("topic"),
                            "mode": script.get("mode"), "engine": engine, "duration": round(total, 1),
                            "video": str(video.relative_to(config.ROOT)) if video.is_relative_to(config.ROOT) else str(video),
                            "caption": post["caption"], "best_time": post["best_time"],
                            "status": "en attente de validation", "telegram": sent,
+                           "text_source": script.get("source"),
                            "tiktok": tk.get("status")})
     shutil.rmtree(work, ignore_errors=True)
     print(f"✅ Terminé en {time.time() - t0:.0f} s : {video}")
