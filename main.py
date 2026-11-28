@@ -36,6 +36,27 @@ def check() -> int:
     return 0
 
 
+def resend(video: Path) -> int:
+    """Relance automatique : envoie la dernière vidéo pas encore reçue sur Telegram."""
+    hist = analytics.load_history()
+    todo = [h for h in hist if not h.get("telegram")]
+    if not todo or not video.exists():
+        print("rien à renvoyer")
+        return 0
+    h = todo[-1]
+    post = {"title": h["title"], "caption": h["caption"], "best_time": h.get("best_time", "19:00")}
+    if not publish.send_telegram(video, post, f"📦 Vidéo du {h['date']} ({h.get('duration', '?')} s)"):
+        print("Telegram toujours indisponible")
+        return 0
+    for x in hist:
+        if x.get("date") <= h["date"]:
+            x["telegram"] = True
+    config.DATA_DIR.mkdir(parents=True, exist_ok=True)
+    analytics.HISTORY.write_text(json.dumps(hist, ensure_ascii=False, indent=2), encoding="utf-8")
+    print(f"✅ vidéo du {h['date']} envoyée")
+    return 0
+
+
 def fit_duration(script: dict, scenes: list[dict]) -> list[dict]:
     """Au-delà de 90 s, retire des scènes du milieu (jamais l'accroche ni la fin)."""
     hi = config.TARGET_SECONDS[1]
@@ -54,9 +75,12 @@ def main() -> int:
     ap.add_argument("--script", help="script JSON déjà écrit (optionnel)")
     ap.add_argument("--music", help="musique libre de droits en fond (optionnel)")
     ap.add_argument("--check", action="store_true", help="vérifie Gemini et Telegram puis s'arrête")
+    ap.add_argument("--resend", help="renvoie sur Telegram une vidéo déjà produite (dernière non reçue)")
     args = ap.parse_args()
     if args.check:
         return check()
+    if args.resend:
+        return resend(Path(args.resend))
 
     t0 = time.time()
     now = datetime.now(ZoneInfo("Europe/Paris"))
